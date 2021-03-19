@@ -78,7 +78,7 @@ Class method with @JavaScriptMethod annotation
   ```
   trong jenkins, tất cả các objects có thể dược extend  [hudson.model.Descriptor](https://github.com/jenkinsci/jenkins/blob/jenkins-2.153/core/src/main/java/hudson/model/Descriptor.java) và tất cả các objects đươc extend hudson.model.Descripto đều có thể truy cập method [hudson.model.DescriptorByNameOwner#getDescriptorByName(String)](https://github.com/jenkinsci/jenkins/blob/jenkins-2.153/core/src/main/java/hudson/model/DescriptorByNameOwner.java). Có rất nhiều class có thể truy cập, thế nhưng hầu hết chúng đều có kiểm tra quyền trước khi thực thi. Thế nhưng điều này có thể được sử dụng làm bước đệm trong một luồng khai thác của bug khác.
  
-  ### 1. CVE-2019-1003000
+  ### 2. CVE-2019-1003000
   "Pipeline: Groovy" Cho phép người dùng xây dựng, kiểm tra, thử nghiệm và phân phối phần mềm dễ dàng hơn. Từ góc nhìn từ dev, pipeline rất nguy hiểm do nó có thể kiểm soát toàn jenkins, nên nó cần được kiểm tra quyền một cách nghiêm ngặt trước khi thực thi.
   Tuy nhiên, chúng ta có thể thấy một [method](https://github.com/jenkinsci/workflow-cps-plugin/blob/workflow-cps-2.61/src/main/java/org/jenkinsci/plugins/workflow/cps/CpsFlowDefinition.java) không có kiểm tra quyền user, nó phân tích xem cú pháp của các tập lệnh mà user sử dụng có chính xác hay không. Với góc nhìn của dev thì điều này khá là an toàn, vì đây chỉ là trình phân tích cú pháp chứ không hề thực thi chúng.
   ```
