@@ -1,9 +1,13 @@
-# Phân tích CVE-2019-1003000 và CVE-2018-1000861 jenkins-rce
+# Phân tích Jenkins RCE - Bypass sandbox
 
 ## I) Buliding
 - Các bạn có thể chạy file docker ở [đây](https://github.com/adamyordan/cve-2019-1003000-jenkins-rce-poc) 
- hoặc cài đặt jenkins ver 2.153  trở xuống, rồi lấy lấy dữ liệu ở [sample-vuln\jenkinsdata](https://github.com/adamyordan/cve-2019-1003000-jenkins-rce-poc/tree/master/sample-vuln/jenkinsdata) thay thế dữ liệu ở thư mục jenkins home của các bạn.
+ hoặc cài đặt jenkins ver 2.137  trở xuống, rồi lấy lấy dữ liệu ở [sample-vuln\jenkinsdata](https://github.com/adamyordan/cve-2019-1003000-jenkins-rce-poc/tree/master/sample-vuln/jenkinsdata) thay thế dữ liệu ở thư mục jenkins home của các bạn.
  - Các bạn cũng có thể tự cài các plugin theo đúng ver có bug, nhưng mình khuyến nghị không nên vì các plugin này đã rất cũ. Bây giờ cài vào sẽ có chút khó khăn hơn (khó khăn gì thì cài đi rồi biết :) )
+ - Trong bài này, mình sẽ phân tích một số lỗ hổng trên jenkins có thể bypass sandbox dẫn đến RCE:
+ 	[CVE-2018-1000861: Code execution through crafted URLs](https://www.jenkins.io/security/advisory/2018-12-05/#SECURITY-595)
+	[CVE-2019-1003000: Sandbox Bypass in Script Security and Pipeline Plugins](https://www.jenkins.io/security/advisory/2019-01-08/#jenkins-security-advisory-2019-01-08)
+	[CVE-2019-1003029: Sandbox Bypass in Script Security Plugin](https://www.jenkins.io/security/advisory/2019-03-06/)
  ## II) Phân tích
  ### 1. CVE-2018-1000861
   Jenkins sử dụng  [Dynamic Routing](https://www.jenkins.io/doc/developer/handling-requests/routing/) để có được sự linh hoạt hơn. Họ sử dụng một quy ước đặt tên để xử lý URL và gọi các method.
@@ -49,7 +53,44 @@ Class method with @JavaScriptMethod annotation
   - Read-only Mode: Ở chế độ này, user có quyền đọc tất cả các nội dung, nhưng không có quyền thực thi các câu lệnh Groovy. Với hacker khi có được quyền này, họ có thể lấy được các resource private. Ở mode này, flag ANONYMOUS_READ=True.
   - Authenticated Mode: Ở chế độ này, nếu user không có thông tin xác thực hợp lệ thì sẽ không thể đọc bất cứ thông tin nào. Ở mode này flag ANONYMOUS_READ=False
   
-  Khi ANONYMOUS_READ=False thì entry point sẽ thực hiện thêm jenkins.model.Jenkins#getTarget() để check xem URL có nằm trong whilelist hay không
+  Khi ANONYMOUS_READ=False thì entry point sẽ thực hiện thêm jenkins.model.Jenkins#getTarget() để check xem URL có nằm trong whilelist hay không.
+  
+  Để tìm thấy whilelist, trên Intellij ta ấn ctrl+n nhập class "jenkins.model.jenkins", tiếp tục ctrl+f12 để show các method trong class. ta nhập "getTarget()" để tìm hàm getTarget().
+  
+  <img src="image/1.png">
+  <img src="image/2.png">
+  
+```
+public Object getTarget() {
+        try {
+            checkPermission(READ);
+        } catch (AccessDeniedException e) {
+            if (!isSubjectToMandatoryReadPermissionCheck(Stapler.getCurrentRequest().getRestOfPath())) {
+                return this;
+            }
+
+            throw e;
+        }
+        return this;
+    }
+```
+
+  Ấn ctrl và click vào hàm "isSubjectToMandatoryReadPermissionCheck" ta được đưa tới hàm "isSubjectToMandatoryReadPermissionCheck"
+```
+public boolean isSubjectToMandatoryReadPermissionCheck(String restOfPath) {
+        for (String name : ALWAYS_READABLE_PATHS) {
+            if (restOfPath.startsWith(name)) {
+                return false;
+            }
+        }
+
+        for (String name : getUnprotectedRootActions()) {
+            if (restOfPath.startsWith("/" + name + "/") || restOfPath.equals("/" + name)) {
+                return false;
+            }
+        }
+```
+   Ấn ctrl và click vào "ALWAYS_READABLE_PATHS" ta được đưa tới whilelist
   
   ```
   private static final ImmutableSet<String> ALWAYS_READABLE_PATHS = ImmutableSet.of(
@@ -66,7 +107,8 @@ Class method with @JavaScriptMethod annotation
 "/instance-identity"
 );
   ```
-  Điều đó nghĩa là chúng ta sẽ bị hạn chế với entrances này. Nhưng nếu chúng ta tìm được một tham chếu mà entrances thuộc whilelist nhưng lại có thể gọi chéo tới một objects khác thì chúng ta vẫn chó thể bypass.
+  
+  Chúng ta sẽ bị hạn chế với entrances này. Nhưng nếu chúng ta tìm được một tham chếu mà entrances thuộc whilelist nhưng lại có thể gọi chéo tới một objects khác thì chúng ta vẫn chó thể bypass.
   
   ```
   GET /securityRealm/user/[username]/descriptorByName/[descriptor_name]/
@@ -76,8 +118,11 @@ Class method with @JavaScriptMethod annotation
 .getUser([username])
 .getDescriptorByName([descriptor_name])
   ```
-  trong jenkins, tất cả các objects có thể dược extend  [hudson.model.Descriptor](https://github.com/jenkinsci/jenkins/blob/jenkins-2.153/core/src/main/java/hudson/model/Descriptor.java) và tất cả các objects đươc extend hudson.model.Descripto đều có thể truy cập method [hudson.model.DescriptorByNameOwner#getDescriptorByName(String)](https://github.com/jenkinsci/jenkins/blob/jenkins-2.153/core/src/main/java/hudson/model/DescriptorByNameOwner.java). Có rất nhiều class có thể truy cập, thế nhưng hầu hết chúng đều có kiểm tra quyền trước khi thực thi. Thế nhưng điều này có thể được sử dụng làm bước đệm trong một luồng khai thác của bug khác.
+  Trong jenkins, tất cả các objects có thể dược extend  [hudson.model.Descriptor](https://github.com/jenkinsci/jenkins/blob/jenkins-2.153/core/src/main/java/hudson/model/Descriptor.java) và tất cả các objects đươc extend hudson.model.Descripto đều có thể truy cập method [hudson.model.DescriptorByNameOwner#getDescriptorByName(String)](https://github.com/jenkinsci/jenkins/blob/jenkins-2.153/core/src/main/java/hudson/model/DescriptorByNameOwner.java). Có rất nhiều class có thể truy cập, thế nhưng hầu hết chúng đều có kiểm tra quyền trước khi thực thi. Thế nhưng điều này có thể được sử dụng làm bước đệm trong một luồng khai thác của bug khác.
  
+ ##### Fix: 
+ Khi mình chạy với phiên bản jenkins core 2.153, mình nhận ra khi chúng ta gọi tới phương thức getUser(). muốn gọi getDescriptorByName() nó phải đi qua phương thức getTarget() ở class User(). Thử diff 2 phiên bản xem có gì khác biệt, mình phát hiện ra ở class User đã được thêm phương thức getTarget() để kiểm tra quyền READ. Nếu k có quyền READ, chúng ta không thể tiếp tục gọi getDescriptorByName() được nữa. Đồng nghĩa với việc chúng ta cần 1 tài khoản có quyền READ. 
+ <img src="image/diffUser.png">
   ### 2. CVE-2019-1003000
   "Pipeline: Groovy" Cho phép người dùng xây dựng, kiểm tra, thử nghiệm và phân phối phần mềm dễ dàng hơn. Từ góc nhìn từ dev, pipeline rất nguy hiểm do nó có thể kiểm soát toàn jenkins, nên nó cần được kiểm tra quyền một cách nghiêm ngặt trước khi thực thi.
   Tuy nhiên, chúng ta có thể thấy một [method](https://github.com/jenkinsci/workflow-cps-plugin/blob/workflow-cps-2.61/src/main/java/org/jenkinsci/plugins/workflow/cps/CpsFlowDefinition.java) không có kiểm tra quyền user, nó phân tích xem cú pháp của các tập lệnh mà user sử dụng có chính xác hay không. Với góc nhìn của dev thì điều này khá là an toàn, vì đây chỉ là trình phân tích cú pháp chứ không hề thực thi chúng.
