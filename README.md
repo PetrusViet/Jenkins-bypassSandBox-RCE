@@ -4,10 +4,10 @@
 - Các bạn có thể chạy file docker ở [đây](https://github.com/adamyordan/cve-2019-1003000-jenkins-rce-poc) 
  hoặc cài đặt jenkins ver 2.137  trở xuống, rồi lấy lấy dữ liệu ở [sample-vuln\jenkinsdata](https://github.com/adamyordan/cve-2019-1003000-jenkins-rce-poc/tree/master/sample-vuln/jenkinsdata) thay thế dữ liệu ở thư mục jenkins home của các bạn.
  - Các bạn cũng có thể tự cài các plugin theo đúng ver có bug, nhưng mình khuyến nghị không nên vì các plugin này đã rất cũ. Bây giờ cài vào sẽ có chút khó khăn hơn (khó khăn gì thì cài đi rồi biết :) )
- - Trong bài này, mình sẽ phân tích một số lỗ hổng trên jenkins có thể bypass sandbox dẫn đến RCE:
- 	[CVE-2018-1000861: Code execution through crafted URLs](https://www.jenkins.io/security/advisory/2018-12-05/#SECURITY-595)
-	[CVE-2019-1003000: Sandbox Bypass in Script Security and Pipeline Plugins](https://www.jenkins.io/security/advisory/2019-01-08/#jenkins-security-advisory-2019-01-08)
-	[CVE-2019-1003029: Sandbox Bypass in Script Security Plugin](https://www.jenkins.io/security/advisory/2019-03-06/)
+ - Trong bài này, mình sẽ phân tích một số lỗ hổng trên jenkins có thể bypass sandbox dẫn đến RCE:  
+	[CVE-2018-1000861: Code execution through crafted URLs](https://www.jenkins.io/security/advisory/2018-12-05/#SECURITY-595)  
+	[CVE-2019-1003000: Sandbox Bypass in Script Security and Pipeline Plugins](https://www.jenkins.io/security/advisory/2019-01-08/#jenkins-security-advisory-2019-01-08)  
+	[CVE-2019-1003029: Sandbox Bypass in Script Security Plugin](https://www.jenkins.io/security/advisory/2019-03-06/)  
  ## II) Phân tích
  ### 1. CVE-2018-1000861
   Jenkins sử dụng  [Dynamic Routing](https://www.jenkins.io/doc/developer/handling-requests/routing/) để có được sự linh hoạt hơn. Họ sử dụng một quy ước đặt tên để xử lý URL và gọi các method.
@@ -290,8 +290,11 @@ import Vietnq
  @Grab(group='org.vietnq', module='poc', version='win1')
  import Vietnq;
  ```
- 
- 
-Ref:
+  ##### Fix: 
+  Khi mình kiểm tra 2 phiên bản Pipeline: Groovy 2.61 và 2.61.1, mình thấy ở method doCheckScriptCompile() đã có thêm hành động check quyền, và có thêm 1 parameter "Item job" đồng nghĩa với việc mình không thể gọi method này với việc thao tác URL nữa
+  <img src="image/3.png">
+  <img src="image/4.png">
+  
+#### Ref:
 - https://blog.orange.tw/2019/01/hacking-jenkins-part-1-play-with-dynamic-routing.html
 - https://blog.orange.tw/2019/02/abusing-meta-programming-for-unauthenticated-rce.html
