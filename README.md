@@ -387,7 +387,7 @@ import Vietnq
             return sandbox ? FormValidation.ok() : ScriptApproval.get().checking(value, GroovyLanguage.get());
         }
  ```
- Theo như [công bổ](https://www.jenkins.io/security/advisory/2019-03-06/) của jenkins, thì đây là hàm kiểm tra script an toàn hơn
+ Theo như [công bố](https://www.jenkins.io/security/advisory/2019-03-06/) của jenkins, thì đây là hàm kiểm tra script an toàn hơn
  
  ```java
  public static @Nonnull FormValidation checkScriptForCompilationErrors(String script, GroovyClassLoader classLoader) {
